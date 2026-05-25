@@ -48,11 +48,19 @@ def _now_iso() -> str:
     return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _fmt_usd(amount) -> str:
+    """Canonical USD format: '<int>.<2-digit fraction>'. Stable across languages."""
+    if isinstance(amount, str):
+        # Trust caller-provided strings unchanged.
+        return amount
+    return f"{float(amount):.2f}"
+
+
 def issue(
     *,
     symbol: str,
     units: int,
-    amount_usd: float,
+    amount_usd,
     recipient: str,
     issuer_sk: Ed25519PrivateKey,
     receipt_id: Optional[str] = None,
@@ -64,13 +72,16 @@ def issue(
 
     All body fields are folded into a canonical SHA-256 hash, which is then
     signed by the issuer. The returned dict is JSON-serializable.
+
+    `amount_usd` is canonicalized as a decimal-formatted string with exactly
+    two fractional digits so the JCS bytes match across language SDKs.
     """
     body = {
         "protocol": PROTOCOL,
         "receipt_id": receipt_id or _new_receipt_id(),
         "symbol": symbol,
         "units": int(units),
-        "amount_usd": amount_usd,
+        "amount_usd": _fmt_usd(amount_usd),
         "recipient": recipient,
         "issued_at": issued_at or _now_iso(),
     }
