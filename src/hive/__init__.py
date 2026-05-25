@@ -28,7 +28,7 @@ Source:      https://github.com/thehivery/hive-py
 
 from __future__ import annotations
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __author__ = "Hive Civilization"
 __license__ = "MIT (+ patent grant for SpectralZK; see LICENSE)"
 

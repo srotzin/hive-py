@@ -56,6 +56,64 @@ def _fmt_usd(amount) -> str:
     return f"{float(amount):.2f}"
 
 
+FREE_TIER_FOOTER = (
+    "Verify at thehiveryiq.com/verify · Upgrade for anchored, identity-verified receipts · "
+    "thehiveryiq.com/sdk/pricing"
+)
+
+ANCHOR_ENDPOINT = "https://api.thehiveryiq.com/v1/anchor"
+
+
+def _resolve_tier(api_key: Optional[str]) -> str:
+    """Tier is determined by the api_key prefix. No network call.
+
+    Prefixes:
+      hk_pro_*    -> pro
+      hk_scale_*  -> scale
+      hk_ent_*    -> enterprise
+      anything else (including None) -> free
+    """
+    if not api_key or not isinstance(api_key, str):
+        return "free"
+    if api_key.startswith("hk_ent_"):
+        return "enterprise"
+    if api_key.startswith("hk_scale_"):
+        return "scale"
+    if api_key.startswith("hk_pro_"):
+        return "pro"
+    return "free"
+
+
+def _request_anchor(canonical_sha256: bytes, api_key: str, endpoint: str) -> Optional[str]:
+    """Request a Base-anchored Merkle inclusion proof reference.
+
+    Best-effort: on any network failure the receipt is still issued without
+    an anchor field. The caller is responsible for retry if anchor is required.
+    """
+    try:
+        import json as _json
+        import urllib.request as _u
+
+        payload = _json.dumps({
+            "canonical_sha256": b64u(canonical_sha256),
+        }).encode("utf-8")
+        req = _u.Request(
+            endpoint,
+            data=payload,
+            method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+                "User-Agent": "hive-protocol-py/0.2.0",
+            },
+        )
+        with _u.urlopen(req, timeout=5) as resp:
+            data = _json.loads(resp.read().decode("utf-8"))
+            return data.get("hahs_anchor")
+    except Exception:
+        return None
+
+
 def issue(
     *,
     symbol: str,
@@ -67,6 +125,9 @@ def issue(
     issued_at: Optional[str] = None,
     hahs_anchor: Optional[str] = None,
     settlement: Optional[str] = None,
+    api_key: Optional[str] = None,
+    anchor: bool = False,
+    anchor_endpoint: str = ANCHOR_ENDPOINT,
 ) -> dict:
     """Issue a signed HAHS receipt.
 
@@ -75,7 +136,17 @@ def issue(
 
     `amount_usd` is canonicalized as a decimal-formatted string with exactly
     two fractional digits so the JCS bytes match across language SDKs.
+
+    Tier behavior:
+      - api_key=None or unprefixed -> tier="free". Footer field embedded.
+        anchor=True is ignored (no anchor returned).
+      - api_key starting with hk_pro_/hk_scale_/hk_ent_ -> paid tier.
+        anchor=True (or anchor=False with hk_scale_/hk_ent_) calls the
+        anchor endpoint and embeds the returned hahs_anchor.
+      - hk_scale_ and hk_ent_ keys anchor every receipt by default.
     """
+    tier = _resolve_tier(api_key)
+
     body = {
         "protocol": PROTOCOL,
         "receipt_id": receipt_id or _new_receipt_id(),
@@ -84,11 +155,24 @@ def issue(
         "amount_usd": _fmt_usd(amount_usd),
         "recipient": recipient,
         "issued_at": issued_at or _now_iso(),
+        "tier": tier,
     }
     if hahs_anchor is not None:
         body["hahs_anchor"] = hahs_anchor
     if settlement is not None:
         body["settlement"] = settlement
+    if tier == "free":
+        body["footer"] = FREE_TIER_FOOTER
+        body["issuer_verified"] = False
+    else:
+        body["issuer_verified"] = True
+        anchor_now = anchor or tier in ("scale", "enterprise")
+        if anchor_now and "hahs_anchor" not in body:
+            anch = _request_anchor(
+                sha256(jcs(body)), api_key, anchor_endpoint
+            )
+            if anch:
+                body["hahs_anchor"] = anch
 
     canonical_bytes = jcs(body)
     canonical_sha256 = sha256(canonical_bytes)

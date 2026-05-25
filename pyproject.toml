@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hive-protocol"
-version = "0.1.0"
+version = "0.2.0"
 description = "Hive Civilization SDK — signed receipts, zero-knowledge proofs, six-gate outbound governance, and selective disclosure for autonomous-agent commerce."
 readme = "README.md"
 authors = [
